@@ -13,6 +13,7 @@ library(kableExtra)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
 library(mapview)
+library(lubridate)
 
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
@@ -40,14 +41,27 @@ house <- building %>%
   left_join(.,parcel_account, by=c("strap"="strap"))%>%
   left_join(.,parcel_gis, by=c("Parcelno"="PARCEL_NO"))%>%
   st_sf()%>%
-  select(-deedNum, -status_cd.y)%>%
-  st_intersection(house,Boulder_boundary)
+  select(-deedNum, -status_cd.y)
+  
+house <- st_intersection(house, Boulder_boundary)                               
+
+house_15_19 <- house
+house_15_19$Tdate<-as.Date(house_15_19$Tdate,format='%m/%d/%Y')
+house_15_19 <- house_15_19%>%
+  filter(Tdate >= "2015-01-01" & Tdate <= "2020-01-01")
 
 ##Crime Data
   
 crime <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/Boulder_Police_Department_(BPD)_Offenses.geojson") %>%
-  st_transform('EPSG:26916')%>%
-  filter(crime, Report_Year=="2019")
+  st_transform('EPSG:26916')
+
+crime <- filter(crime, Report_Year=="2019")
+
+crime <- crime%>%
+  filter(IBRType != "All Other Offenses") %>% 
+  filter(IBRType != "Society")%>%
+  na.omit() %>% 
+  distinct()
 
 ##Public Facilities
 
