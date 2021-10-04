@@ -13,7 +13,6 @@ library(kableExtra)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
 library(mapview)
-library(lubridate)
 
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
@@ -62,6 +61,25 @@ crime <- crime%>%
   filter(IBRType != "Society")%>%
   na.omit() %>% 
   distinct()
+
+##Crime Buffer
+
+house_15_19$crimes.Buffer =
+  st_buffer(house_15_19, 660) %>% 
+  aggregate(mutate(crime, counter = 1),., sum) %>% 
+  pull(counter)
+
+##Crime Nearest Neighbor Feature
+
+st_c <- st_coordinates
+
+house_15_19 <-
+  house_15_19 %>% 
+  mutate(crime_nn1 = nn_function(st_c(house_15_19), st_c(crime), 1),
+         crime_nn2 = nn_function(st_c(house_15_19), st_c(crime), 2), 
+         crime_nn3 = nn_function(st_c(house_15_19), st_c(crime), 3), 
+         crime_nn4 = nn_function(st_c(house_15_19), st_c(crime), 4), 
+         crime_nn5 = nn_function(st_c(house_15_19), st_c(crime), 5))
 
 ##Public Facilities
 
