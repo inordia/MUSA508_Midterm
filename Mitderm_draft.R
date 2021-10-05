@@ -13,6 +13,8 @@ library(kableExtra)
 library(jtools)     # for regression model plots
 library(ggstance) # to support jtools plots
 library(mapview)
+library(tigris)
+library(leaflet)
 
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
@@ -87,5 +89,10 @@ park <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/Prope
   st_transform('EPSG:26916')%>%
   select(NAME, PARKTYPE, SUBCOMMUNITY, geometry)
 
+##School District
 
+school <- read.csv("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/school.csv")%>%
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326, agr = "constant")%>%
+  st_transform('EPSG:26916')
 
+school <- st_intersection(school, Boulder_boundary)   
