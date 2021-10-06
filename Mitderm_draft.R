@@ -29,18 +29,27 @@ Boulder_boundary <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_M
   select(-Name, -Description)
 Boulder_boundary <- st_union(Boulder_boundary)
 
-housing <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/studentData.geojson")
+housing <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/studentData.geojson", crs = 'ESRI:102254')%>%
+  st_transform('EPSG:26913')
 
+housing <- housing %>%
+  select(-Stories, -UnitCount)
+
+housing <- housing [!is.na(housing$price),]
+housing <- housing [!is.na(housing$geometry),]
 
 ##Crime Data
   
 crime <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/Boulder_Police_Department_(BPD)_Offenses.geojson") %>%
   st_transform('EPSG:26913')
 
-crime <- filter(crime, Report_Year=="2019")
+year <- c("2019","2020","2021")
+
+crime <- filter(crime, Report_Year %in% year)
 
 crime <- crime%>%
-  filter(IBRType != "All Other Offenses") %>% 
+  filter(IBRType != "All Other Offenses")%>%
+  select(-Special_District)%>%
   na.omit() %>% 
   distinct()
 
@@ -76,7 +85,9 @@ playground <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm
 
 housing <- housing%>%
   mutate(playground=nn_function(st_c(housing),st_c(playground),1))%>%
-  mutate(playground=nn_function(st_c(housing),st_c(park),1))
+  mutate(park=nn_function(st_c(housing),st_c(park),1))
+
+st_cast##use this for converting polygons to points
 
 
 ##School District
@@ -85,7 +96,15 @@ school <- read.csv("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/sc
   st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326, agr = "constant")%>%
   st_transform('EPSG:26913')
 
-school <- st_intersection(school, Boulder_boundary)   
+school <- st_intersection(school, Boulder_boundary)
+
+housing$school_buffer =
+  st_buffer(housing, 8000) %>% 
+  aggregate(mutate(school, counter = 1),., sum) %>% 
+  pull(counter)
+
+housing <- housing%>%
+  mutate(school=nn_function(st_c(housing),st_c(school),1))
 
 #Bus Stop
 bus_stop <-read.csv("bus_stop.csv")%>%
