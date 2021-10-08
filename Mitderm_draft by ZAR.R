@@ -32,68 +32,92 @@ Boulder_boundary <- st_read("City_of_Boulder_City_Limits.kml") %>%
   select(-Name, -Description)
 Boulder_boundary <- st_union(Boulder_boundary)
 
-parcel_account <- read.csv("Account_Parcels.csv")
-building <- read.csv("Buildings.csv")
-sale <- read.csv("Sales.csv")
-parcel_gis <- st_read("Parcels.geojson")%>%
-  select(-OBJECTID, -PARCEL_NUM)%>%
+
+housing <- st_read("studentData.geojson", crs = 'ESRI:102254')%>%
   st_transform('EPSG:26913')
 
-building <- filter(building, bldgClassDscr=="SINGLE FAM RES IMPROVEMENTS")
-house <- building %>%
-  left_join(.,sale, by=c("strap"="strap"))%>%
-  left_join(.,parcel_account, by=c("strap"="strap"))%>%
-  left_join(.,parcel_gis, by=c("Parcelno"="PARCEL_NO"))%>%
-  st_sf()%>%
-  select(-deedNum, -status_cd.y)
+housing <- housing %>%
+  select(-Stories, -UnitCount)
 
-house <- st_intersection(house, Boulder_boundary)                               
-
-house_15_19 <- house
-house_15_19$Tdate<-as.Date(house_15_19$Tdate,format='%m/%d/%Y')
-house_15_19 <- house_15_19%>%
-  filter(Tdate >= "2015-01-01" & Tdate <= "2020-01-01")
+housing <- housing [!is.na(housing$price),]
+housing <- housing [!is.na(housing$geometry),]
 
 ##Crime Data
 
 crime <- st_read("Boulder_Police_Department_(BPD)_Offenses.geojson") %>%
   st_transform('EPSG:26913')
 
-crime <- filter(crime, Report_Year=="2019")
+year <- c("2019","2020","2021")
 
-crime <- crime%>%
-  filter(IBRType != "All Other Offenses") %>% 
-  filter(IBRType != "Society")%>%
+crime <- filter(crime, Report_Year %in% year)
+
+crime.sf <- crime%>%
+  filter(IBRType != "All Other Offenses")%>%
   na.omit() %>% 
+  dplyr::select(geometry) %>%
+  st_as_sf(crs = 4326, agr = "constant")%>%
+  st_transform('EPSG:26913')%>%
   distinct()
 
 ##Crime Buffer
 
-house_15_19$crimes.Buffer =
-  st_buffer(house_15_19, 660) %>% 
-  aggregate(mutate(crime, counter = 1),., sum) %>% 
+housing$crimes.Buffer =
+  st_buffer(housing, 200) %>% 
+  aggregate(mutate(crime.sf, counter = 1),., sum) %>% 
   pull(counter)
-crime <- mutate(crime,counter=1)
-buffer<-st_buffer(house_15_19,660)
-aggregate(crime,buffer,FUN=sum)
 
+crime <- mutate(crime.sf,counter=1)
+buffer<-st_buffer(housing, 200)
+aggregate(crime,buffer,FUN=sum,na.rm=TRUE)
 ##Crime Nearest Neighbor Feature
+nn_function <- function(measureFrom,measureTo,k) {
+  measureFrom_Matrix <-
+    as.matrix(measureFrom)
+  measureTo_Matrix <-
+    as.matrix(measureTo)
+  nn <-   
+    get.knnx(measureTo, measureFrom, k)$nn.dist
+  output <-
+    as.data.frame(nn) %>%
+    rownames_to_column(var = "thisPoint") %>%
+    gather(points, point_distance, V1:ncol(.)) %>%
+    arrange(as.numeric(thisPoint)) %>%
+    group_by(thisPoint) %>%
+    summarize(pointDistance = mean(point_distance)) %>%
+    arrange(as.numeric(thisPoint)) %>% 
+    dplyr::select(-thisPoint) %>%
+    pull()
+  
+  return(output)  
+}
 
 st_c <- st_coordinates
 
-house_15_19 <-
-  house_15_19 %>% 
-  mutate(crime_nn1 = nn_function(st_c(house_15_19), st_c(crime), 1),
-         crime_nn2 = nn_function(st_c(house_15_19), st_c(crime), 2), 
-         crime_nn3 = nn_function(st_c(house_15_19), st_c(crime), 3), 
-         crime_nn4 = nn_function(st_c(house_15_19), st_c(crime), 4), 
-         crime_nn5 = nn_function(st_c(house_15_19), st_c(crime), 5))
+## Plot assault density
+ggplot() + geom_sf(data = Boulder_boundary, fill = "grey40") +
+  stat_density2d(data = data.frame(st_coordinates(crime.sf)), 
+                 aes(X, Y, fill = ..level.., alpha = ..level..),
+                 size = 0.01, bins = 40, geom = 'polygon') +
+  scale_fill_gradient(low = "#25CB10", high = "#FA7800", name = "Density") +
+  scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
+  labs(title = "Density of Crime, Blouder") +
+  mapTheme()
 
 ##Public Facilities
 
-park <- st_read("Properties_Managed_by_Parks_and_Recreation_Polygons.geojson")%>%
+park <- st_read("Properties_Managed_by_Parks_and_Recreation_Points.geojson")%>%
   st_transform('EPSG:26913')%>%
   select(NAME, PARKTYPE, SUBCOMMUNITY, geometry)
+
+playground <- st_read("Playground_Sites_Points.geojson")%>%
+  st_transform('EPSG:26913')%>%
+  select(NAME, MAPLABEL, geometry)%>%
+  na.omit()
+
+housing <- housing%>%
+  mutate(playground=nn_function(st_c(housing),st_c(playground),1))%>%
+  mutate(playground=nn_function(st_c(housing),st_c(park),1))
+
 
 ##School District
 
@@ -101,11 +125,14 @@ school <- read.csv("school.csv")%>%
   st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326, agr = "constant")%>%
   st_transform('EPSG:26913')
 
-school <- st_intersection(school, Boulder_boundary) 
+school <- st_intersection(school, Boulder_boundary)   
 
-#bus stop
+#Bus Stop
 bus_stop <-read.csv("bus_stop.csv")%>%
   st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant")%>%
   st_transform('EPSG:26913')
 
 bus_stop <- st_intersection(bus_stop, Boulder_boundary) 
+
+#median income by census tracts
+
