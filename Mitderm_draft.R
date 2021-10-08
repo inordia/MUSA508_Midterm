@@ -38,6 +38,71 @@ housing <- housing %>%
 housing <- housing [!is.na(housing$price),]
 housing <- housing [!is.na(housing$geometry),]
 
+housing.city <- st_intersection(housing, Boulder_boundary)
+
+replace.na ##CLEANING THE NAs
+
+##Internal Characteristics
+housing <- housing %>%
+  mutate(age = 2021- EffectiveYear)%>%
+  filter(price <= 8000000)%>%
+  filter(nbrBedRoom < 10, carStorageSF < 3000)
+
+
+st_drop_geometry(housing)%>%
+  dplyr::select(price, TotalFinishedSF, age) %>%
+  gather(Variable, Value, -price) %>% 
+  ggplot(aes(Value, price)) +
+  geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
+  facet_wrap(~Variable, ncol = 3, scales = "free") +
+  labs(title = "Price as a function of continuous variables") +
+  plotTheme()
+
+st_drop_geometry(housing)%>%
+  dplyr::select(price, bsmtSF, carStorageSF, nbrBedRoom, nbrRoomsNobath, nbrFullBaths) %>%
+  filter(nbrBedRoom < 10, carStorageSF < 3000)%>%
+  gather(Variable, Value, -price) %>% 
+  ggplot(aes(Value, price)) +
+  geom_point(size = .5) + geom_smooth(method = "lm", se=F, colour = "#FA7800") +
+  facet_wrap(~Variable, ncol = 3, scales = "free") +
+  labs(title = "Price as a function of continuous variables") +
+  plotTheme()
+
+st_drop_geometry(housing) %>% 
+  dplyr::select(price,
+                designCodeDscr,
+                qualityCodeDscr,
+                ConstCodeDscr) %>%
+  gather(Variable, Value, -price) %>% 
+  ggplot(aes(Value, price)) +
+  geom_bar(position = "dodge", stat = "summary", fun.y = "mean") +
+  facet_wrap(~Variable, ncol = 1, scales = "free") +
+  labs(title = "Price as a function of\ncategorical variables", y = "Mean_Price") +
+  plotTheme() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+st_drop_geometry(housing) %>% 
+  dplyr::select(price,
+                HeatingDscr,
+                ExtWallDscrPrim,
+                IntWallDscr,
+                Roof_CoverDscr) %>%
+  gather(Variable, Value, -price) %>% 
+  ggplot(aes(Value, price)) +
+  geom_bar(position = "dodge", stat = "summary", fun.y = "mean") +
+  facet_wrap(~Variable, ncol = 1, scales = "free") +
+  labs(title = "Price as a function of\ncategorical variables", y = "Mean_Price") +
+  plotTheme() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#IntWall not good
+
+##Feature Engineering: Internal Characteristics
+housing <- 
+  housing %>%
+  mutate(nbrBedRoom.cat = case_when(
+    nbrBedRoom >= 0 & nbrBedRoom < 4  ~ "Up to 3 Bedrooms",
+    nbrBedRoom >= 4 & nbrBedRoom < 5  ~ "4 Bedrooms",
+    nbrBedRoom > 4                    ~ "5+ Bedrooms"))
+
 ##Crime Data
   
 crime <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/Boulder_Police_Department_(BPD)_Offenses.geojson") %>%
@@ -50,14 +115,19 @@ crime <- filter(crime, Report_Year %in% year)
 crime <- crime%>%
   filter(IBRType != "All Other Offenses")%>%
   select(-Special_District)%>%
-  na.omit() %>% 
+  na.omit()
+
+crime.sf <- crime%>%
+  dplyr::select(geometry) %>%
+  st_as_sf(crs = 4326, agr = "constant")%>%
+  st_transform('EPSG:26913')%>%
   distinct()
 
 ##Crime Buffer
 
 housing$crimes.Buffer =
   st_buffer(housing, 200) %>% 
-  aggregate(mutate(crime, counter = 1),., sum) %>% 
+  aggregate(mutate(crime.sf, counter = 1),., sum) %>% 
   pull(counter)
 
 ##Crime Nearest Neighbor Feature
@@ -66,11 +136,11 @@ st_c <- st_coordinates
 
 housing <-
   housing %>% 
-  mutate(crime_nn1 = nn_function(st_c(housing), st_c(crime), 1),
-         crime_nn2 = nn_function(st_c(housing), st_c(crime), 2), 
-         crime_nn3 = nn_function(st_c(housing), st_c(crime), 3), 
-         crime_nn4 = nn_function(st_c(housing), st_c(crime), 4), 
-         crime_nn5 = nn_function(st_c(housing), st_c(crime), 5))
+  mutate(crime_nn1 = nn_function(st_c(housing), st_c(crime.sf), 1),
+         crime_nn2 = nn_function(st_c(housing), st_c(crime.sf), 2), 
+         crime_nn3 = nn_function(st_c(housing), st_c(crime.sf), 3), 
+         crime_nn4 = nn_function(st_c(housing), st_c(crime.sf), 4), 
+         crime_nn5 = nn_function(st_c(housing), st_c(crime.sf), 5))
 
 ##Public Facilities
 
@@ -96,15 +166,18 @@ school <- read.csv("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/sc
   st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326, agr = "constant")%>%
   st_transform('EPSG:26913')
 
-school <- st_intersection(school, Boulder_boundary)
+school.sf <- school%>%
+  dplyr::select(geometry) %>%
+  st_as_sf(crs = 4326, agr = "constant")%>%
+  st_transform('EPSG:26913')
 
 housing$school_buffer =
-  st_buffer(housing, 8000) %>% 
-  aggregate(mutate(school, counter = 1),., sum) %>% 
+  st_buffer(housing, 8000) %>% ##WHAT IS THE RIGHT PARAMETER
+  aggregate(mutate(school.sf, counter = 1),., sum) %>% 
   pull(counter)
 
 housing <- housing%>%
-  mutate(school=nn_function(st_c(housing),st_c(school),1))
+  mutate(school=nn_function(st_c(housing),st_c(school.sf),1))
 
 #Bus Stop
 bus_stop <-read.csv("bus_stop.csv")%>%
@@ -112,5 +185,4 @@ bus_stop <-read.csv("bus_stop.csv")%>%
   st_transform('EPSG:26913')
 
 bus_stop <- st_intersection(bus_stop, Boulder_boundary) 
-
 
