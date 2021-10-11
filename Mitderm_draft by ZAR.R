@@ -575,7 +575,7 @@ comparison %>%
 Green line represents prediction") +
   plotTheme()
 
-#Provide a map of your residuals for your test set.Include a Moran¡¯s I test and a plotof the spatial lag in errors.
+#Provide a map of your residuals for your test set.Include a Moran¡¯s I test and a plot of the spatial lag in errors.
 
 #Moran's I 
 moranTest <- moran.mc(housing.test.nhood$price.AbsError,
@@ -590,6 +590,15 @@ ggplot(as.data.frame(moranTest$res[c(1:999)]),
        subtitle= "Observed Moran's I in orange",
        x="Moran's I",
        y="Count") +
+  plotTheme()
+
+#plot of the spatial lag in errors
+ggplot(housing.test.nhood, aes(x=lagPriceError, y=price)) +
+  geom_point(colour = "#FA7800") +
+  geom_smooth(method = "lm", se = FALSE, colour = "#25CB10") +
+  labs(title = "plot of the spatial lag in errors",
+       x = "Spatial lag of errors",
+       y = "price") +
   plotTheme()
 
 #Using tidycensus, split your city into two groups (perhaps by race or income) and testyour model¡¯s generalizability. Is your model generalizable?
