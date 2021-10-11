@@ -48,7 +48,7 @@ housing <- st_read("C:/Users/zheng/Desktop/MUSA508_Midterm/studentData.geojson",
 
 housing <- housing[-2638,]
 housing<-housing%>%
-  st_intersection(housing, Boulder_boundary)
+  st_intersection(Boulder_boundary,housing)
 
 
 ##Public Facilities
@@ -340,9 +340,10 @@ reg1 <- lm(price ~ ., data = st_drop_geometry(housing) %>%
                            Roof_CoverDscr,
                            park,
                            school,
+                           fastfood_buffer,
+                           water_nn1,
                            restaurant_nn1,
                            bus_stop_nn1,
-                           park_nn1,
                            company,
                            nbrRoomsNobath, 
                            nbrFullBaths))
@@ -601,6 +602,17 @@ ggplot(housing.test.nhood, aes(x=lagPriceError, y=price)) +
        y = "price") +
   plotTheme()
 
+#Provide a map of your predicted values for where ¡®toPredict¡¯ is both 0 and 1.
+ggplot() +
+  geom_sf(data = Boulder_boundary, fill = "grey40") +
+  geom_sf(data = housing.test.nhood, aes(colour = q5(price.Predict)), 
+          show.legend = "point", size = 1) +
+  scale_colour_manual(values = palette5,
+                      labels=qBr(housing.test.nhood,"price.Predict"),
+                      name="Quintile\nBreaks") +
+  labs(title="map of your predicted values for where ¡®toPredict¡¯ is both 0 and 1") +
+  mapTheme()
+
 #Using tidycensus, split your city into two groups (perhaps by race or income) and testyour model¡¯s generalizability. Is your model generalizable?
 tracts19<- get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
                    year = 2019,                              
@@ -616,15 +628,17 @@ mutate(percentWhite = Whites / TotalPop,
        raceContext = ifelse(percentWhite > .5, "White majority", "Non-White majority"),
        incomeContext = ifelse(Median_Income > 40453, "High Income", "Low income"))
 
-#tracts19<-st_join(tracts19,Boulder.test,join = st_intersects)
+#tracts19<-st_join(housing.test.nhood,tracts19,join = st_intersects)
 grid.arrange(ncol = 2,
-             ggplot() + geom_sf(data = na.omit(tracts19),
+             ggplot() + 
+               geom_sf(data = na.omit(tracts19),
                                 aes(fill = raceContext)) +
                scale_fill_manual(values = c("#25CB10", "#FA7800"),
                                  name="Race Context") +
                labs(title = "Race Context") +
                mapTheme() + theme(legend.position="bottom"),
-             ggplot() + geom_sf(data = na.omit(tracts19),
+             ggplot() + 
+               geom_sf(data = na.omit(tracts19),
                                 aes(fill = incomeContext)) +
                scale_fill_manual(values = c("#25CB10", "#FA7800"),
                                  name="Income Context") +
