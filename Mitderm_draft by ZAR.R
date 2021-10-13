@@ -39,12 +39,20 @@ st_c <- st_coordinates
 
 ##Housing Data
 
-Boulder_boundary <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/City_of_Boulder_City_Limits.kml") %>%
+Boulder_city <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/City_of_Boulder_City_Limits.kml") %>%
   st_transform('EPSG:26913')%>%
   select(-Name, -Description)
-Boulder_boundary <- st_union(Boulder_boundary)
+Boulder_city <- st_union(Boulder_city)
 
-st_bbox(Boulder_boundary)
+Boulder.county=st_read("https://opendata.arcgis.com/api/v3/datasets/964b8f3b3dbe401bb28d49ac93d29dc4_0/downloads/data?format=kml&spatialRefId=4326")%>%
+  st_as_sf()
+Boulder.county.reproject<-Boulder.county %>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(-Name,-Description)
+
+q0 <- opq(bbox = c(-105.6945,39.91297,-105.0528,40.26396))
+
+st_bbox(Boulder.county.reproject)
 
 housing <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/studentData.geojson", crs = 'ESRI:102254')%>%
   st_transform('EPSG:26913')
@@ -70,7 +78,6 @@ ggplot()  +
 ##Public Facilities
 
 # Parks
-q0 <- opq(bbox = c(-105.3015,39.95692,-105.1781,40.09448))
 
 park <- add_osm_feature(opq = q0, key = 'leisure', value = "park") %>%
   osmdata_sf(.)
@@ -81,14 +88,11 @@ park.sf <- st_geometry(park$osm_points) %>%
   cbind(., park$osm_points$name) %>%
   rename(NAME = park.osm_points.name)%>%
   st_transform('EPSG:26913')%>%
-  st_intersection(Boulder_boundary,park.sf)%>%
+  st_intersection(Boulder.county.reproject,park.sf)%>%
   dplyr::select(geometry)
 
-housing<-housing%>%
-  mutate(
-    park_nn1 = nn_function(st_c(housing), st_c(park.sf), 1),
-    park_nn2 = nn_function(st_c(housing), st_c(park.sf), 2), 
-    park_nn3 = nn_function(st_c(housing), st_c(park.sf), 3))
+housing <- housing%>%
+  mutate(park=nn_function(st_c(housing),st_c(park.sf),1))
 
 #fast food
 
@@ -101,28 +105,34 @@ fast_food.sf <- st_geometry(fast_food$osm_points) %>%
   cbind(., fast_food$osm_points$amenity) %>%
   rename(NAME = fast_food.osm_points.amenity)%>%
   st_transform('EPSG:26913')%>%
-  st_intersection(Boulder_boundary,fast_food.sf)
+  st_intersection(Boulder.county.reproject,park.sf)
 
 fast_food.sf<-
   fast_food.sf%>%
   dplyr::select(geometry)
 
 housing$fastfood_buffer =
-  st_buffer(housing, 8000) %>% ##WHAT IS THE RIGHT PARAMETER
+  st_buffer(housing, 800) %>% ##WHAT IS THE RIGHT PARAMETER
   aggregate(mutate(fast_food.sf, counter = 1),., sum) %>% 
   pull(counter)
 
 
 #water
 
-water <- st_read("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/Lakes_and_Reservoirs/Lakes_and_Reservoirs.shp")%>%
-  st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant")%>%
-  st_transform('EPSG:26913')
+water <- add_osm_feature(opq = q0, key = 'natural', value = "water") %>%
+  osmdata_sf(.)
+
+water.sf <- water$osm_points %>%
+  dplyr::select(geometry) %>%
+  st_as_sf(crs = 4326, agr = "constant") %>%
+  distinct() %>%
+  st_transform('EPSG:26913')%>%
+  st_intersection(Boulder.county.reproject,park.sf)
 
 housing <- housing%>%
-  mutate(water_nn1=nn_function(st_c(housing),st_c(water),1),
-         water_nn2=nn_function(st_c(housing),st_c(water),2),
-         water_nn3=nn_function(st_c(housing),st_c(water),3))
+  mutate(water_nn1=nn_function(st_c(housing),st_c(water.sf),1),
+       water_nn2=nn_function(st_c(housing),st_c(water.sf),2),
+       water_nn3=nn_function(st_c(housing),st_c(water.sf),3))
 
 #playground 
 
@@ -135,13 +145,11 @@ playground.sf <- st_geometry(playground$osm_points) %>%
   cbind(., playground$osm_points$name) %>%
   rename(NAME = playground.osm_points.name)%>%
   st_transform('EPSG:26913')%>%
-  st_intersection(Boulder_boundary,playground.sf)%>%
+  st_intersection(Boulder.county.reproject,park.sf)%>%
   dplyr::select(geometry)
 
 housing <- housing%>%
   mutate(playground=nn_function(st_c(housing),st_c(playground.sf),1))
-housing <- housing%>%
-  mutate(park=nn_function(st_c(housing),st_c(park.sf),1))
 
 #restaurant
 restaurant <- add_osm_feature(opq = q0, key = 'amenity', value = "restaurant") %>%
@@ -153,7 +161,7 @@ restaurant.sf <- st_geometry(restaurant$osm_points) %>%
   cbind(., restaurant$osm_points$amenity) %>%
   rename(NAME = restaurant.osm_points.amenity)%>%
   st_transform('EPSG:26913')%>%
-  st_intersection(Boulder_boundary,restaurant.sf)%>%
+  st_intersection(Boulder.county.reproject,park.sf)%>%
   dplyr::select(geometry)%>%
   distinct()
 
@@ -182,7 +190,7 @@ housing$school_buffer =
 housing <- housing%>%
   mutate(school=nn_function(st_c(housing),st_c(school.sf),1))
 
-#company
+#Company
 
 company <- add_osm_feature(opq = q0, key = 'office', value = "company") %>%
   osmdata_sf(.)
@@ -193,21 +201,25 @@ company.sf <- st_geometry(company$osm_points) %>%
   cbind(., company$osm_points$office) %>%
   rename(NAME = company.osm_points.office)%>%
   st_transform('EPSG:26913')%>%
-  st_intersection(Boulder_boundary,company.sf)%>%
+  st_intersection(Boulder.county.reproject,park.sf)%>%
   na.omit()
 housing <- housing%>%
   mutate(company=nn_function(st_c(housing),st_c(company.sf),1))
 
 #Bus station
 
-bus_station <- read.csv("/Users/inordia/Desktop/UPenn搞起来/592/MUSA508_Midterm/bus_stop.csv")%>%
-  st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant")%>%
-  st_transform('EPSG:26913')
+bus_station <- add_osm_feature(opq = q0, key = 'amenity', value = "bus_station") %>%
+  osmdata_sf(.)
 
-bus_station.sf <- bus_station%>%
-  dplyr::select(geometry) %>%
-  st_as_sf(crs = 4326, agr = "constant")%>%
-  st_transform('EPSG:26913')
+bus_station.sf <- st_geometry(bus_station$osm_points) %>%
+  st_transform(4326) %>%
+  st_sf() %>%
+  cbind(., bus_station$osm_points$amenity) %>%
+  rename(NAME = bus_station.osm_points.amenity)%>%
+  st_transform('EPSG:26913')%>%
+  dplyr::select(geometry)%>%
+  st_intersection(Boulder.county.reproject,park.sf)
+
 
 housing <- housing%>%
   mutate(bus_stop_nn1=nn_function(st_c(housing),st_c(bus_station.sf),1),
@@ -294,35 +306,6 @@ st_drop_geometry(housing) %>%
   labs(title = "Price as a function of number of beds") +
   plotTheme()
 
-
-var<-housing%>%
-  dplyr::select(price,
-                qualityCode,
-                age,
-                designCodeDscr,
-                qualityCodeDscr,
-                TotalFinishedSF,
-                nbrBedRoom.cat,
-                Ac.cat,
-                HeatingDscr,
-                Roof_CoverDscr,
-                park,
-                school,
-                restaurant_nn1,
-                restaurant_nn2,
-                restaurant_nn3,
-                bus_stop_nn1,
-                bus_stop_nn2,
-                bus_stop_nn3,
-                park_nn1,
-                park_nn2,
-                park_nn3,
-                fastfood_buffer,
-                company,
-                nbrBedRoom.cat, 
-                nbrRoomsNobath, 
-                nbrFullBaths)
-
 ##Correlation Test
 numericVars <- 
   select_if(st_drop_geometry(housing), is.numeric) %>% na.omit()
@@ -347,10 +330,10 @@ reg1 <- lm(price ~ ., data = st_drop_geometry(housing) %>%
                            Roof_CoverDscr,
                            park,
                            school,
-                           fastfood_buffer,
                            restaurant_nn1,
                            bus_stop_nn1,
-                           company))
+                           company,
+                           water_nn1))
 summary(reg1)
 
 #split the dataset into training and testing
@@ -382,8 +365,8 @@ reg.training <-
                      school,
                      restaurant_nn1,
                      bus_stop_nn1,
-                     park_nn1,
-                     company))
+                     company,
+                     water_nn1))
 Boulder.testing <-
   Boulder.testing %>%
   mutate(Regression = "Baseline Regression",
@@ -412,18 +395,20 @@ reg.cv <-
                         school,
                         restaurant_nn1,
                         bus_stop_nn1,
-                        company), 
+                        company,
+                        water_nn1), 
         method = "lm", trControl = fitControl, na.action = na.pass)
 
 reg.cv
 
 mean(reg.cv$resample[,3])
 
+#Spatial Structure
+
 Boulder.training.nhood <- housing %>%
   filter(toPredict == 0)%>%
   dplyr::select(-toPredict)
 
-#Spatial Structure
 neighborhoods <- Median_income%>%
   dplyr::select(-MedianInc,-MedHHInc)
 
@@ -431,7 +416,7 @@ neighborhoods <- Median_income%>%
 Boulder_neigh <-st_join(housing, neighborhoods, join = st_intersects)
 housing<-st_join(Boulder_neigh,Median_income,join = st_intersects)
 housing <- housing%>%
-  select(-GEOID.y)
+  select(-GEOID.y, -GEOID, -GEOID.x.1)
 Boulder.training.nhood <- housing %>%
   filter(toPredict == 0)
 coords <- st_coordinates(Boulder.training.nhood)
@@ -458,6 +443,7 @@ reg.nhood <- lm(price ~ ., data = st_drop_geometry(Boulder.training.nhood) %>%
                                 restaurant_nn1,
                                 bus_stop_nn1,
                                 company,
+                                water_nn1,
                                 lagPrice))
 summary(reg.nhood)
 
@@ -470,10 +456,14 @@ inTrain <- createDataPartition(
             housing$Roof_CoverDscr,
             housing$GEOID.x), 
   p = .75, list = FALSE)
-housing.training.nhood <- Boulder.training.nhood[inTrain,] 
+
+lag.price <- housing.training.nhood%>%
+  select(geometry, lagPrice)
+housing.training.nhood.1 <- st_join(Boulder.training, lag.price, join = st_intersects)
+housing.test.nhood.1 <- st_join(Boulder.training[-inTrain,], lag.price, join = st_intersects)
 housing.test.nhood <- Boulder.training.nhood[-inTrain,]  
 
-reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(housing.training.nhood) %>% 
+reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(housing.training.nhood.1) %>% 
                            dplyr::select(price,
                                          age,
                                          GEOID.x,
@@ -489,13 +479,14 @@ reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(housing.training.nho
                                          bus_stop_nn1,
                                          bus_stop_nn3,
                                          company,
+                                         water_nn1,
                                          lagPrice))
 
 
-housing.test.nhood <-
-  housing.test.nhood %>%
+housing.test.nhood.1 <-
+  housing.test.nhood.1 %>%
   mutate(Regression = "Neighbourhood effects",
-         price.Predict = predict(reg.nhood.training, housing.test.nhood),
+         price.Predict = predict(reg.nhood.training, housing.test.nhood.1),
          price.Error = price.Predict - price,
          price.AbsError = abs(price.Predict - price),
          price.APE = (abs(price.Predict - price)) /
@@ -505,10 +496,10 @@ housing.test.nhood <-
 #Provide a polished table of mean absolute error and MAPE for a single test set.
 
 # errors of housing.test.nhood
-coords_1 <-  st_coordinates(housing.test.nhood) 
+coords_1 <-  st_coordinates(housing.test.nhood.1) 
 neighborList_1 <- knn2nb(knearneigh(coords_1, 5))
 spatialWeights_1 <- nb2listw(neighborList_1, style="W")
-housing.test.nhood$lagPriceError <- lag.listw(spatialWeights_1, housing.test.nhood$price.AbsError)
+housing.test.nhood.1$lagPriceError <- lag.listw(spatialWeights_1, housing.test.nhood.1$price.AbsError)
 
 coords_2 <- st_coordinates(Boulder.testing)
 neighborList_2 <- knn2nb(knearneigh(coords_2, 5))
@@ -606,6 +597,31 @@ ggplot() +
                       name="Quintile\nBreaks") +
   labs(title="map of your predicted values for where ??toPredict?? is both 0 and 1") +
   mapTheme()
+
+#Using the test set predictions, provide a map of mean absolute percentage error(MAPE) by neighborhood.
+nhood.summary <- housing.test.nhood %>% 
+  group_by(GEOID.x) %>%
+  summarize(meanPrice = mean(price, na.rm = T),
+            meanPrediction = mean(price.Predict, na.rm = T),
+            meanMAE = mean(price.AbsError, na.rm = T),
+            MAPE=mean(price.APE, na.rm = T),
+            Income=mean(MedianInc, na.rm = T))
+
+nhood.summary %>% 
+  st_drop_geometry %>%
+  arrange(desc(meanMAE)) %>% 
+  knitr::kable() %>% kable_styling()
+
+map_MAPE <- housing.test.nhood %>% 
+  group_by(GEOID.x) %>% 
+  summarise(MAPE = mean(price.APE, na.rm = T))
+
+#Provide a scatterplot plot of MAPE by neighborhood as a function of mean price by neighborhood.
+plot(nhood.summary$meanPrice, 
+     nhood.summary$MAPE, 
+     main="MAPE by neighborhood as a function of mean price by neighbourhood", 
+     cex.main=0.75, ylim=range(0:1))
+
 
 #Using tidycensus, split your city into two groups (perhaps by race or income) and testyour model??s generalizability. Is your model generalizable?
 tracts19<- get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
