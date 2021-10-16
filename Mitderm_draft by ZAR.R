@@ -64,7 +64,6 @@ housing <- housing %>%
 
 housing <- housing[-2637,]
 
-
 ggplot()  +
   geom_sf(data = housing, aes(colour = q5(price)), 
           show.legend = "point", size = .75) +
@@ -77,7 +76,7 @@ ggplot()  +
 
 ##Public Facilities
 
-# Parks
+#parks
 
 park <- add_osm_feature(opq = q0, key = 'leisure', value = "park") %>%
   osmdata_sf(.)
@@ -203,7 +202,8 @@ company.sf <- st_geometry(company$osm_points) %>%
   st_transform('EPSG:26913')%>%
   st_intersection(Boulder.county.reproject,park.sf)%>%
   na.omit()
-housing <- housing%>%
+
+housing <- housing %>%
   mutate(company=nn_function(st_c(housing),st_c(company.sf),1))
 
 #Bus station
@@ -226,8 +226,8 @@ housing <- housing%>%
          bus_stop_nn2=nn_function(st_c(housing),st_c(bus_station.sf),2),
          bus_stop_nn3=nn_function(st_c(housing),st_c(bus_station.sf),3))
 
-#median income by census tracts
-Median_income <- get_acs(geography = "tract",
+##Spatial Process
+neighborhood <- get_acs(geography = "tract",
                              year = 2019, 
                              variables = c("B06011_001E", #Median income in the past 12 months
                                           "B19013_001E"), #Median household income in the past 12 months
@@ -236,9 +236,13 @@ Median_income <- get_acs(geography = "tract",
                              county = "Boulder", 
                              output = "wide") %>%
   st_transform('EPSG:26913')%>%
-  dplyr::select(-NAME,-B06011_001M,-B19013_001M) %>%
-  rename(MedianInc = B06011_001E,
-         MedHHInc = B19013_001E)
+  dplyr::select(-NAME,-B06011_001M,-B19013_001M,-B06011_001E,-B19013_001E)
+
+urban_area <- urban_areas(cb = FALSE, year = NULL)%>%
+  st_transform('EPSG:26913')%>%
+  select(NAME10, geometry)
+urban_area <- st_intersection(Boulder.county.reproject, urban_area)%>%
+  filter(NAME10 != "Denver--Aurora, CO")
 
 #internal characteristics
 st_drop_geometry(housing)%>%
@@ -292,11 +296,17 @@ housing <-
     nbrBedRoom >= 0 & nbrBedRoom < 4  ~ "Up to 3 Bedrooms",
     nbrBedRoom >= 4 & nbrBedRoom < 5  ~ "4 Bedrooms",
     nbrBedRoom > 4                    ~ "5+ Bedrooms"))
-housing<-housing%>%
-  mutate(Ac.cat=case_when(
-    Ac<200 ~ "not have Ac",
-    Ac>=200 ~ "have AC"
-  ))
+
+housing <- st_join(housing, neighborhood, join = st_intersects)
+
+housing <- st_join(housing, urban_area, join = st_intersects)
+
+housing$NAME10[is.na(housing$NAME10)] <- 0
+
+housing <- housing %>%
+  rename(urban_status = NAME10)
+
+housing$urban_status <- ifelse(housing$urban_status == "0", "non-urban", "urban")
 
 st_drop_geometry(housing) %>% 
   dplyr::select(price, nbrBedRoom.cat) %>% #4
@@ -305,6 +315,17 @@ st_drop_geometry(housing) %>%
   geom_point(size = 1) + 
   labs(title = "Price as a function of number of beds") +
   plotTheme()
+
+#the spatial lag of housing
+Boulder <- housing %>%
+  filter(toPredict == 0) %>%
+  dplyr::select(-toPredict)
+coords <- st_coordinates(Boulder)
+neighborList <- knn2nb(knearneigh(coords, 5))
+spatialWeights <- nb2listw(neighborList, style="W")
+
+Boulder$lagPrice <- lag.listw(spatialWeights,
+                                             Boulder$price)
 
 ##Correlation Test
 numericVars <- 
@@ -337,19 +358,18 @@ reg1 <- lm(price ~ ., data = st_drop_geometry(housing) %>%
 summary(reg1)
 
 #split the dataset into training and testing
-Boulder.training <- housing %>%
-  filter(toPredict == 0) %>%
-  dplyr::select(-toPredict)
 
 inTrain <- createDataPartition(
-  y = paste(Boulder.training$designCodeDscr,
-  Boulder.training$nbrBedRoom.cat,
-  Boulder.training$HeatingDscr,
-  Boulder.training$Roof_CoverDscr), 
+  y = paste(Boulder$designCodeDscr,
+  Boulder$nbrBedRoom.cat,
+  Boulder$HeatingDscr,
+  Boulder$Roof_CoverDscr,
+  Boulder$GEOID), 
   p = .75, list = FALSE)
 
-Boulder.training <- Boulder.training[inTrain,]
-Boulder.testing  <- Boulder.training[-inTrain,] 
+Boulder.training <- Boulder[inTrain,]
+Boulder.testing  <- Boulder[-inTrain,] 
+housing.test.nhood <- Boulder.testing
 
 reg.training <-
   lm(price ~ ., data = as.data.frame(Boulder.training) %>%
@@ -405,33 +425,13 @@ mean(reg.cv$resample[,3])
 
 #Spatial Structure
 
-Boulder.training.nhood <- housing %>%
-  filter(toPredict == 0)%>%
-  dplyr::select(-toPredict)
-
-neighborhoods <- Median_income%>%
-  dplyr::select(-MedianInc,-MedHHInc)
-
-#the spatial lag of housing
-Boulder_neigh <-st_join(housing, neighborhoods, join = st_intersects)
-housing<-st_join(Boulder_neigh,Median_income,join = st_intersects)
-housing <- housing%>%
-  select(-GEOID.y, -GEOID, -GEOID.x.1)
-Boulder.training.nhood <- housing %>%
-  filter(toPredict == 0)
-coords <- st_coordinates(Boulder.training.nhood)
-neighborList <- knn2nb(knearneigh(coords, 5))
-spatialWeights <- nb2listw(neighborList, style="W")
-
-Boulder.training.nhood$lagPrice <- lag.listw(spatialWeights,
-                                             Boulder.training.nhood$price)
-
 ##Feature Engineering: Income
 ##Reg.nhood
-reg.nhood <- lm(price ~ ., data = st_drop_geometry(Boulder.training.nhood) %>% 
+reg.nhood <- lm(price ~ ., data = st_drop_geometry(Boulder.training) %>% 
                   dplyr::select(price,
                                 age,
-                                GEOID.x,
+                                GEOID,
+                                urban_status,
                                 designCodeDscr,
                                 qualityCodeDscr,
                                 TotalFinishedSF,
@@ -448,25 +448,11 @@ reg.nhood <- lm(price ~ ., data = st_drop_geometry(Boulder.training.nhood) %>%
 summary(reg.nhood)
 
 ##Accuracy for Neighborhood Model
-inTrain <- createDataPartition(
-  y = paste(housing$designCodeDscr,
-            housing$qualityCodeDscr,
-            housing$nbrBedRoom.cat,
-            housing$HeatingDscr,
-            housing$Roof_CoverDscr,
-            housing$GEOID.x), 
-  p = .75, list = FALSE)
 
-lag.price <- housing.training.nhood%>%
-  select(geometry, lagPrice)
-housing.training.nhood.1 <- st_join(Boulder.training, lag.price, join = st_intersects)
-housing.test.nhood.1 <- st_join(Boulder.training[-inTrain,], lag.price, join = st_intersects)
-housing.test.nhood <- Boulder.training.nhood[-inTrain,]  
-
-reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(housing.training.nhood.1) %>% 
+reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(Boulder.training) %>% 
                            dplyr::select(price,
                                          age,
-                                         GEOID.x,
+                                         GEOID,
                                          designCodeDscr,
                                          qualityCodeDscr,
                                          TotalFinishedSF,
@@ -483,10 +469,10 @@ reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(housing.training.nho
                                          lagPrice))
 
 
-housing.test.nhood.1 <-
-  housing.test.nhood.1 %>%
+housing.test.nhood <-
+  housing.test.nhood %>%
   mutate(Regression = "Neighbourhood effects",
-         price.Predict = predict(reg.nhood.training, housing.test.nhood.1),
+         price.Predict = predict(reg.nhood.training, housing.test.nhood),
          price.Error = price.Predict - price,
          price.AbsError = abs(price.Predict - price),
          price.APE = (abs(price.Predict - price)) /
