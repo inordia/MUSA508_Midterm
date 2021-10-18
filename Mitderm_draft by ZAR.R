@@ -1,6 +1,8 @@
 
 ##Set Up
 
+rm(list=ls())
+
 library(tidyverse)
 library(sf)
 library(spdep)
@@ -18,6 +20,7 @@ library(tigris)
 library(leaflet)
 library(osmdata)
 library(tidycensus)
+library(stargazer)
 
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
@@ -63,16 +66,6 @@ housing <- housing %>%
   filter(nbrBedRoom < 10, carStorageSF < 3000)
 
 housing <- housing[-2637,]
-
-ggplot()  +
-  geom_sf(data = housing, aes(colour = q5(price)), 
-          show.legend = "point", size = .75) +
-  scale_colour_manual(values = palette5,
-                      labels=qBr(housing,"price"),
-                      name="Quintile\nBreaks") +
-  labs(title="Price Per Square Foot, Boulder") +
-  mapTheme()
-
 
 ##Public Facilities
 
@@ -297,6 +290,8 @@ housing <-
     nbrBedRoom >= 4 & nbrBedRoom < 5  ~ "4 Bedrooms",
     nbrBedRoom > 4                    ~ "5+ Bedrooms"))
 
+##Feature Engineering: Spatial Process
+
 housing <- st_join(housing, neighborhood, join = st_intersects)
 
 housing <- st_join(housing, urban_area, join = st_intersects)
@@ -327,6 +322,16 @@ spatialWeights <- nb2listw(neighborList, style="W")
 Boulder$lagPrice <- lag.listw(spatialWeights,
                                              Boulder$price)
 
+housing$price[is.na(housing$price)] <- 0
+
+coords.all <- st_coordinates(housing)
+neighborList.all <- knn2nb(knearneigh(coords.all, 5))
+spatialWeights.all <- nb2listw(neighborList.all, style="W")
+
+housing$lagPrice <- lag.listw(spatialWeights.all,
+                              housing$price)
+
+
 ##Correlation Test
 numericVars <- 
   select_if(st_drop_geometry(housing), is.numeric) %>% na.omit()
@@ -338,6 +343,75 @@ ggcorrplot(
   type="lower",
   insig = "blank") +  
   labs(title = "Correlation across numeric variables")
+
+#Present 4 home price correlation scatter plots that you think are of interest.
+st_drop_geometry(housing) %>% 
+  dplyr::select(price, company, TotalFinishedSF, age, bus_stop_nn1) %>% 
+  gather(Variable, Value, -price) %>% 
+  ggplot(aes(Value, price)) +
+  geom_point(size = .5) + 
+  geom_smooth(method = "lm", se=T, colour = "#FA7800") +
+  facet_wrap(~Variable, ncol = 2, scales = "free") +
+  labs(title = "home price correlation scatter plots") +
+  plotTheme()
+
+#Develop 1 map of your dependent variable (sale price)
+ggplot()  +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing, aes(colour = q5(price)), 
+          show.legend = "point", size = .75) +
+  scale_colour_manual(values = palette5,
+                      labels=qBr(housing,"price"),
+                      name="Quintile\nBreaks") +
+  labs(title="Sales price distribution in Boulder") +
+  mapTheme()
+
+#Develop 3 maps of 3 of your most interesting independent variables.
+#urban status
+ggplot() +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing, aes(colour = urban_status), 
+          show.legend = "point", size = .75) +
+  labs(title="Urban status in Boulder") +
+  mapTheme()
+
+#distance to bus station
+ggplot() +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing, aes(colour = q5(bus_stop_nn1)), 
+          show.legend = "point", size = .75) +
+  scale_colour_manual(values = palette5,
+                      labels=qBr(housing,"bus_stop_nn1"),
+                      name="Quintile\nBreaks") +
+  labs(title="Distance to the Nearest Bus Station, Boulder") +
+  mapTheme()
+
+#distance to restaurant
+ggplot() +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing, aes(colour = q5(restaurant_nn1)), 
+          show.legend = "point", size = .75) +
+  scale_colour_manual(values = palette5,
+                      labels=qBr(housing,"restaurant_nn1"),
+                      name="Quintile\nBreaks") +
+  labs(title="Distance to restaurant, Boulder") +
+  mapTheme()
+
+#housing quality
+ggplot() +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing, aes(colour = qualityCodeDscr), 
+          show.legend = "point", size = .75) +
+  labs(title="Housing Quality in Boulder") +
+  mapTheme()
+
+#housing design
+ggplot() +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing, aes(colour = designCodeDscr), 
+          show.legend = "point", size = .75) +
+  labs(title="Housing Design in Boulder") +
+  mapTheme()
 
 ##Regression 1
 reg1 <- lm(price ~ ., data = st_drop_geometry(housing) %>% 
@@ -425,7 +499,6 @@ mean(reg.cv$resample[,3])
 
 #Spatial Structure
 
-##Feature Engineering: Income
 ##Reg.nhood
 reg.nhood <- lm(price ~ ., data = st_drop_geometry(Boulder.training) %>% 
                   dplyr::select(price,
@@ -453,6 +526,7 @@ reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(Boulder.training) %>
                            dplyr::select(price,
                                          age,
                                          GEOID,
+                                         urban_status,
                                          designCodeDscr,
                                          qualityCodeDscr,
                                          TotalFinishedSF,
@@ -479,13 +553,32 @@ housing.test.nhood <-
            price.Predict)%>%
   filter(price < 8000000)
 
+housing.test.all <- housing
+housing.test.all <- housing.test.all%>%
+  mutate(Regression = "Neighbourhood effects",
+         price.Predict = predict(reg.nhood.training, housing.test.all),
+         price.Error = price.Predict - price,
+         price.AbsError = abs(price.Predict - price),
+         price.APE = (abs(price.Predict - price)) /
+           price.Predict)%>%
+  filter(price < 8000000)
+  
+#Provide a polished table of lm summary results
+
+summary(reg.nhood.training)
+
+stargazer(reg.nhood.training, type = "html",
+          title = "Boulder Housing Price Prediction Model (Training Set)",
+          star.cutoffs = c(0.05, 0.01, 0.001))
+
+
 #Provide a polished table of mean absolute error and MAPE for a single test set.
 
 # errors of housing.test.nhood
-coords_1 <-  st_coordinates(housing.test.nhood.1) 
+coords_1 <-  st_coordinates(housing.test.nhood) 
 neighborList_1 <- knn2nb(knearneigh(coords_1, 5))
 spatialWeights_1 <- nb2listw(neighborList_1, style="W")
-housing.test.nhood.1$lagPriceError <- lag.listw(spatialWeights_1, housing.test.nhood.1$price.AbsError)
+housing.test.nhood$lagPriceError <- lag.listw(spatialWeights_1, housing.test.nhood$price.AbsError)
 
 coords_2 <- st_coordinates(Boulder.testing)
 neighborList_2 <- knn2nb(knearneigh(coords_2, 5))
@@ -533,6 +626,21 @@ compare<- data.frame(MAE_mean=MAE_mean,
 compare
 
 #Plot predicted prices as a function of observed prices
+housing.test.nhood1<-housing.test.nhood%>%
+  filter(price<5500000, price.Predict<5500000&price.Predict>0)
+
+ggplot(housing.test.nhood1,aes(price, price.Predict)) +
+  geom_point() +
+  stat_smooth(data=housing.test.nhood1,aes(price, price),
+              method = "lm", se = FALSE, size = 1, colour="#FA7800") +
+  stat_smooth(data=housing.test.nhood1,aes(price,price.Predict),
+              method = "lm", se = FALSE, size = 1, colour="#25CB10") +
+  facet_wrap(~Regression) +
+  labs(title="Predicted sale price as a function of observed price",
+       subtitle="Orange line represents a perfect prediction;
+ Green line represents prediction") +
+  plotTheme()
+
 comparison %>%
   dplyr::select(price.Predict, price, Regression) %>%
   ggplot(aes(price, price.Predict)) +
@@ -547,7 +655,18 @@ comparison %>%
 Green line represents prediction") +
   plotTheme()
 
-#Provide a map of your residuals for your test set.Include a Moran??s I test and a plot of the spatial lag in errors.
+#Provide a map of your residuals for your test set.Include a Moran's I test and a plot of the spatial lag in errors.
+
+#Map of residuals
+ggplot() +
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing.test.nhood, aes(colour = q5(price.AbsError)), 
+          show.legend = "point", size = 1) +
+  scale_colour_manual(values = palette5,
+                      labels=qBr(housing.test.nhood,"price.AbsError"),
+                      name="Quintile\nBreaks") +
+  labs(title="Map of Residuals for the test set") +
+  mapTheme()
 
 #Moran's I 
 moranTest <- moran.mc(housing.test.nhood$price.AbsError,
@@ -573,25 +692,43 @@ ggplot(housing.test.nhood, aes(x=lagPriceError, y=price)) +
        y = "price") +
   plotTheme()
 
-#Provide a map of your predicted values for where ??toPredict?? is both 0 and 1.
+#Provide a map of your predicted values for where toPredict is both 0 and 1.
 ggplot() +
-  geom_sf(data = Boulder_boundary, fill = "grey40") +
-  geom_sf(data = housing.test.nhood, aes(colour = q5(price.Predict)), 
+  geom_sf(data = Boulder.county.reproject, fill = "grey40") +
+  geom_sf(data = housing.test.all, aes(colour = q5(price.Predict)), 
           show.legend = "point", size = 1) +
   scale_colour_manual(values = palette5,
-                      labels=qBr(housing.test.nhood,"price.Predict"),
+                      labels=qBr(housing.test.all,"price.Predict"),
                       name="Quintile\nBreaks") +
-  labs(title="map of your predicted values for where ??toPredict?? is both 0 and 1") +
+  labs(title="map of predicted values for where toPredict is both 0 and 1") +
   mapTheme()
 
+
+
 #Using the test set predictions, provide a map of mean absolute percentage error(MAPE) by neighborhood.
+
+st_drop_geometry(housing.test.nhood)%>%
+  group_by(GEOID) %>% 
+  summarise(MAPE = mean(price.APE, na.rm = T))%>%
+  ungroup()%>%
+  left_join(neighborhood)%>%
+  st_sf()%>%
+  ggplot() +
+  geom_sf(aes(fill = MAPE)) +
+  geom_sf(data = housing.test.nhood, colour ="black", size =.5) +
+  scale_fill_gradient(low = palette5[1], high = palette5[5],
+                      name = "MAPE") +
+  labs(title = "map of mean absolute percentage error(MAPE) by neighborhood") +
+  mapTheme()
+
+
+#Provide a scatterplot plot of MAPE by neighborhood as a function of mean price by neighborhood.
 nhood.summary <- housing.test.nhood %>% 
-  group_by(GEOID.x) %>%
+  group_by(GEOID) %>%
   summarize(meanPrice = mean(price, na.rm = T),
             meanPrediction = mean(price.Predict, na.rm = T),
             meanMAE = mean(price.AbsError, na.rm = T),
-            MAPE=mean(price.APE, na.rm = T),
-            Income=mean(MedianInc, na.rm = T))
+            MAPE=mean(price.APE, na.rm = T))
 
 nhood.summary %>% 
   st_drop_geometry %>%
@@ -599,10 +736,9 @@ nhood.summary %>%
   knitr::kable() %>% kable_styling()
 
 map_MAPE <- housing.test.nhood %>% 
-  group_by(GEOID.x) %>% 
+  group_by(GEOID) %>% 
   summarise(MAPE = mean(price.APE, na.rm = T))
 
-#Provide a scatterplot plot of MAPE by neighborhood as a function of mean price by neighborhood.
 plot(nhood.summary$meanPrice, 
      nhood.summary$MAPE, 
      main="MAPE by neighborhood as a function of mean price by neighbourhood", 
@@ -623,6 +759,25 @@ tracts19<- get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001
 mutate(percentWhite = Whites / TotalPop,
        raceContext = ifelse(percentWhite > .5, "White majority", "Non-White majority"),
        incomeContext = ifelse(Median_Income > 40453, "High Income", "Low income"))
+
+ggplot() + 
+  geom_sf(data = na.omit(tracts19),
+          aes(fill = incomeContext)) +
+  scale_fill_manual(values = c("#25CB10", "#FA7800"),
+                    name="Income Context") +
+  labs(title = "Income Context") +
+  mapTheme() + theme(legend.position="bottom")
+
+st_join(comparison, tracts19) %>% 
+  group_by(Regression, incomeContext) %>%
+  summarize(mean.MAPE = scales::percent(mean(price.APE, na.rm = T))) %>%
+  st_drop_geometry() %>%
+  spread(incomeContext, mean.MAPE) %>%
+  kable(caption = "Table set MAPE by neighbourhood income context") %>%
+  kable_styling("striped", full_width = F) %>%
+  row_spec(1, color = "black", background = "#25CB10") %>%
+  row_spec(2, color = "black", background = "#FA7800") 
+
 
 #tracts19<-st_join(housing.test.nhood,tracts19,join = st_intersects)
 grid.arrange(ncol = 2,
