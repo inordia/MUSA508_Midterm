@@ -322,14 +322,14 @@ spatialWeights <- nb2listw(neighborList, style="W")
 Boulder$lagPrice <- lag.listw(spatialWeights,
                                              Boulder$price)
 
-housing$price[is.na(housing$price)] <- 0
 
 coords.all <- st_coordinates(housing)
 neighborList.all <- knn2nb(knearneigh(coords.all, 5))
 spatialWeights.all <- nb2listw(neighborList.all, style="W")
 
 housing$lagPrice <- lag.listw(spatialWeights.all,
-                              housing$price)
+                              housing$price, NAOK = TRUE)
+
 
 
 ##Correlation Test
