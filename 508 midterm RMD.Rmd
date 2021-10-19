@@ -287,7 +287,7 @@ neighborList.all <- knn2nb(knearneigh(coords.all, 5))
 spatialWeights.all <- nb2listw(neighborList.all, style="W")
 
 housing$lagPrice <- lag.listw(spatialWeights.all,
-                              housing$price)
+                              housing$price, NAOK = TRUE)
 ```
 Present a table of summary statistics with variable descriptions.Sort these variables by their category (internal characteristics, amenities/public services or spatial structure). 
 ```{r}
