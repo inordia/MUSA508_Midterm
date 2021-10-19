@@ -6,6 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
 ##Set Up
 
 rm(list=ls())
@@ -280,14 +281,24 @@ spatialWeights <- nb2listw(neighborList, style="W")
 Boulder$lagPrice <- lag.listw(spatialWeights,
                                              Boulder$price)
 
-
+housing$price[is.na(housing$price)] <- 0
 coords.all <- st_coordinates(housing)
 neighborList.all <- knn2nb(knearneigh(coords.all, 5))
 spatialWeights.all <- nb2listw(neighborList.all, style="W")
 
 housing$lagPrice <- lag.listw(spatialWeights.all,
-                              housing$price, NAOK = TRUE)
+                              housing$price)
 ```
+```{r}
+housing$price[is.na(housing$price)] <- 0
+coords.all <- st_coordinates(housing)
+neighborList.all <- knn2nb(knearneigh(coords.all, 5))
+spatialWeights.all <- nb2listw(neighborList.all, style="W")
+
+housing$lagPrice <- lag.listw(spatialWeights.all,
+                              housing$price)
+```
+
 Present a table of summary statistics with variable descriptions.Sort these variables by their category (internal characteristics, amenities/public services or spatial structure). 
 ```{r}
 final_vars<-st_drop_geometry(Boulder)%>%
@@ -312,6 +323,7 @@ final_vars<-st_drop_geometry(Boulder)%>%
 stargazer(final_vars,type = "text",title = "Table 1. summary statistics with final chosen variable descriptions")
 
 ```
+
 Present a correlation matrix
 
 ```{r}
@@ -796,5 +808,10 @@ st_join(comparison, tracts19) %>%
   row_spec(1, color = "black", background = "#25CB10") %>%
   row_spec(2, color = "black", background = "#FA7800")
 ```
+```{r}
+
+```
+
+
 
 
