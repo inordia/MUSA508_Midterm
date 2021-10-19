@@ -307,7 +307,6 @@ final_vars<-st_drop_geometry(Boulder)%>%
                                          school,
                                          restaurant_nn1,
                                          bus_stop_nn1,
-                                         bus_stop_nn3,
                                          company,
                                          water_nn1,
                                          lagPrice)%>% na.omit()
@@ -522,6 +521,24 @@ summary(reg.nhood)
 ```
 Provide a polished table of mean absolute error and MAPE for a single test set.
 ```{r}
+reg.nhood.training <- lm(price ~ ., data = st_drop_geometry(Boulder.training) %>% 
+                           dplyr::select(price,
+                                age,
+                                GEOID,
+                                urban_status,
+                                designCodeDscr,
+                                qualityCodeDscr,
+                                TotalFinishedSF,
+                                nbrBedRoom.cat,
+                                HeatingDscr,
+                                Roof_CoverDscr,
+                                park,
+                                school,
+                                restaurant_nn1,
+                                bus_stop_nn1,
+                                company,
+                                water_nn1,
+                                lagPrice))
 housing.test.nhood <-
   housing.test.nhood %>%
   mutate(Regression = "Neighbourhood effects",
